@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulador 3D de ADN y ARN</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--ink:#4a4560;--card:rgba(255,255,255,.75);--bgA:#d8ecff;--bgB:#fde2f0;}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);
+background:linear-gradient(135deg,var(--bgA),var(--bgB));transition:background .6s;overflow:hidden}
+body.rna{--bgA:#ffe9d6;--bgB:#dff7e6}
+#app{display:flex;flex-direction:column;height:100%}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:12px 16px}
+h1{font-size:1.15rem;margin:0}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+button{border:0;border-radius:999px;padding:8px 14px;font:inherit;font-weight:700;color:var(--ink);background:var(--card);cursor:pointer}
+button.on{background:#fff;box-shadow:0 0 0 2px #b9a9ff inset}
+#stage{flex:1;position:relative;min-height:0;touch-action:none;cursor:grab}
+#stage canvas{display:block;width:100%;height:100%}
+.panel{position:absolute;background:var(--card);backdrop-filter:blur(6px);border-radius:16px;padding:10px 12px;font-size:.82rem;line-height:1.35}
+#legend{left:12px;top:8px}
+#legend div{display:flex;align-items:center;gap:8px;margin:3px 0}
+#legend i{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;font-style:normal;font-weight:800;color:#3b3550}
+#info{right:12px;bottom:12px;max-width:min(300px,calc(100% - 24px))}
+#seq{margin-top:6px;font-family:ui-monospace,Menlo,monospace;word-break:break-all;font-weight:700}
+label{display:flex;gap:8px;align-items:center;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+<h1>🧬 Simulador 3D: ADN y ARN</h1>
+<div class="btns">
+<button id="bDNA" class="on">ADN</button>
+<button id="bRNA">ARN</button>
+<button id="bRot" class="on">Girar</button>
+<button id="bSeq">Nueva secuencia</button>
+</div>
+</header>
+<div id="stage">
+<div class="panel" id="legend"></div>
+<div class="panel" id="info"></div>
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var COL={A:0xff8fab,T:0xffe27a,G:0x7fc4ff,C:0x8fe3b0,U:0xc7a4ff};
+var NAME={A:"Adenina",T:"Timina",G:"Guanina",C:"Citosina",U:"Uracilo"};
+var PUR={A:1,G:1};
+var comp={A:"T",T:"A",G:"C",C:"G"};
+var stage=document.getElementById("stage");
+var renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+stage.appendChild(renderer.domElement);
+var scene=new THREE.Scene();
+var camera=new THREE.PerspectiveCamera(45,1,0.1,100);
+camera.position.set(0,0,22);
+scene.add(new THREE.AmbientLight(0xffffff,0.8));
+var dl=new THREE.DirectionalLight(0xffffff,0.6);dl.position.set(5,8,10);scene.add(dl);
+var root=new THREE.Group();scene.add(root);
+var mode="DNA",auto=true,rx=0.12,ry=0.6,zoom=22;
+
+function hex(c){return "#"+("000000"+c.toString(16)).slice(-6)}
+function mat(c){return new THREE.MeshPhongMaterial({color:c,shininess:50})}
+function cyl(a,b,r,color){
+var d=new THREE.Vector3().subVectors(b,a),len=d.length();
+var m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,16),mat(color));
+m.position.copy(a).add(b).multiplyScalar(0.5);
+m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());return m;
+}
+function ribbon(R,rise,tw,N,phase,w,color,H){
+var steps=Math.round((N+0.8)*14),pos=[],idx=[];
+for(var j=0;j<=steps;j++){
+var t=-0.4+(N-1+0.8)*j/steps,a=phase+t*tw,y=t*rise-H/2;
+pos.push(R*Math.cos(a),y+w/2,R*Math.sin(a),R*Math.cos(a),y-w/2,R*Math.sin(a));
+if(j<steps){var k=j*2;idx.push(k,k+1,k+2,k+1,k+3,k+2);}
+}
+var g=new THREE.BufferGeometry();
+g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+g.setIndex(idx);g.computeVertexNormals();
+return new THREE.Mesh(g,new THREE.MeshPhongMaterial({color:color,side:THREE.DoubleSide,shininess:70}));
+}
+function plate(y){
+var m=new THREE.Mesh(new THREE.CylinderGeometry(2.8,2.8,0.18,6),new THREE.MeshPhongMaterial({color:0xcfe6f7,transparent:true,opacity:0.85}));
+m.position.y=y;return m;
+}
+function rndSeq(n,set){var s=[];for(var i=0;i<n;i++)s.push(set[Math.floor(Math.random()*set.length)]);return s;}
+var seq=rndSeq(20,["A","T","G","C"]),rna=rndSeq(22,["A","U","G","C"]);
+function clear(){while(root.children.length){var o=root.children.pop();o.traverse(function(n){if(n.geometry)n.geometry.dispose();});}}
+
+function buildDNA(){
+clear();var N=seq.length,rise=0.62,tw=2*Math.PI/10,R=1.7,Ri=R-0.04,H=(N-1)*rise;
+root.add(ribbon(R,rise,tw,N,0,0.62,0x1a1a1a,H));
+root.add(ribbon(R,rise,tw,N,Math.PI,0.62,0x1a1a1a,H));
+for(var i=0;i<N;i++){
+var a=i*tw,y=i*rise-H/2,u=new THREE.Vector3(Math.cos(a),0,Math.sin(a));
+var p1=u.clone().multiplyScalar(Ri),p2=u.clone().multiplyScalar(-Ri);
+p1.y=y;p2.y=y;
+var b1=seq[i],b2=comp[b1],f=PUR[b1]?0.57:0.43;
+var m=p1.clone().lerp(p2,f);
+root.add(cyl(p1,m,0.15,COL[b1]));root.add(cyl(m,p2,0.15,COL[b2]));
+}
+root.add(plate(-H/2-0.9));
+info("ADN: doble hélice","Dos cintas azúcar‑fosfato enrolladas. Cada peldaño une dos bases: A–T y G–C. Las bases grandes (A, G) se emparejan con las pequeñas (T, C).",seq.join("")+"<br>"+seq.map(function(b){return comp[b]}).join(""));
+legend(["A","T","G","C"]);
+}
+function buildRNA(){
+clear();var N=rna.length,rise=0.6,tw=2*Math.PI/11,R=1.6,Ri=R-0.04,H=(N-1)*rise;
+root.add(ribbon(R,rise,tw,N,0,0.62,0x1a1a1a,H));
+for(var i=0;i<N;i++){
+var a=i*tw,y=i*rise-H/2,b=rna[i],len=PUR[b]?1.15:0.8;
+var u=new THREE.Vector3(Math.cos(a),0,Math.sin(a));
+var p=u.clone().multiplyScalar(Ri);p.y=y;
+var q=u.clone().multiplyScalar(Ri-len);q.y=y;
+root.add(cyl(p,q,0.17,COL[b]));
+}
+root.add(plate(-H/2-0.9));
+info("ARN: cadena sencilla","Una sola cinta azúcar‑fosfato (ribosa) con bases hacia el interior. Aparece el Uracilo (U) en lugar de la Timina. Las bases largas (A, G) son purinas y las cortas (C, U) pirimidinas.",rna.join(""));
+legend(["A","U","G","C"]);
+}
+function legend(list){
+document.getElementById("legend").innerHTML="<b>Bases nitrogenadas</b>"+list.map(function(b){
+return '<div><i style="background:'+hex(COL[b])+'">'+b+'</i>'+NAME[b]+'</div>';}).join("")+
+'<div><i style="background:#1a1a1a"></i>Esqueleto azúcar‑fosfato</div>';
+}
+function info(t,d,s){document.getElementById("info").innerHTML="<b>"+t+"</b><br>"+d+'<div id="seq">'+s+"</div>"+
+'<label>Zoom <input id="zm" type="range" min="12" max="32" value="'+(44-zoom)+'"></label>';
+document.getElementById("zm").oninput=function(e){zoom=44-parseFloat(e.target.value);};}
+function build(){mode==="DNA"?buildDNA():buildRNA();}
+function setMode(m){mode=m;document.body.classList.toggle("rna",m==="RNA");
+document.getElementById("bDNA").classList.toggle("on",m==="DNA");
+document.getElementById("bRNA").classList.toggle("on",m==="RNA");build();}
+document.getElementById("bDNA").onclick=function(){setMode("DNA")};
+document.getElementById("bRNA").onclick=function(){setMode("RNA")};
+document.getElementById("bRot").onclick=function(e){auto=!auto;e.target.classList.toggle("on",auto)};
+document.getElementById("bSeq").onclick=function(){seq=rndSeq(20,["A","T","G","C"]);rna=rndSeq(22,["A","U","G","C"]);build();};
+
+var drag=false,lx=0,ly=0;
+stage.addEventListener("pointerdown",function(e){if(e.target.closest(".panel"))return;drag=true;lx=e.clientX;ly=e.clientY;stage.style.cursor="grabbing";});
+window.addEventListener("pointerup",function(){drag=false;stage.style.cursor="grab";});
+window.addEventListener("pointermove",function(e){if(!drag)return;ry+=(e.clientX-lx)*0.01;rx+=(e.clientY-ly)*0.01;rx=Math.max(-1.4,Math.min(1.4,rx));lx=e.clientX;ly=e.clientY;});
+stage.addEventListener("wheel",function(e){e.preventDefault();zoom=Math.max(12,Math.min(32,zoom+e.deltaY*0.01));var z=document.getElementById("zm");if(z)z.value=44-zoom;},{passive:false});
+function resize(){var w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+window.addEventListener("resize",resize);
+function loop(){requestAnimationFrame(loop);if(auto&&!drag)ry+=0.006;
+root.rotation.set(rx,ry,0);camera.position.z+=(zoom-camera.position.z)*0.15;renderer.render(scene,camera);}
+resize();build();loop();
+})();
+</script>
+</body>
+</html>
